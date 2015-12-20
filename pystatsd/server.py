@@ -7,6 +7,7 @@ import logging
 from . import gmetric
 from subprocess import call
 from warnings import warn
+from ISStreamer.Streamer import Streamer
 # from xdrlib import Packer, Unpacker
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class Server(object):
                  ganglia_spoof_host='statsd:statsd',
                  gmetric_exec='/usr/bin/gmetric', gmetric_options = '-d',
                  graphite_host='localhost', graphite_port=2003, global_prefix=None, 
+                 initialstate_bucket='Default', initialstate_key=None,
                  flush_interval=10000,
                  no_aggregate_counters=False, counters_prefix='stats',
                  timers_prefix='stats.timers', expire=0):
@@ -82,10 +84,20 @@ class Server(object):
         # For services like Hosted Graphite, etc.
         self.global_prefix = global_prefix
 
+        # InitialState Settings
+        self.initialstate_bucket = initialstate_bucket
+        self.initialstate_key = initialstate_key
+        if self.transport == 'initialstate':
+            self.isstream = Streamer(bucket_name=self.initialstate_bucket, 
+                                     access_key=self.initialstate_key)
+
         self.counters = {}
         self.timers = {}
         self.gauges = {}
         self.flusher = 0
+
+    def send_to_isstream(self, k, v, t=None):
+        self.isstream.log(k, v, t)
 
     def send_to_ganglia_using_gmetric(self,k,v,group, units):
         call([self.gmetric_exec, self.gmetric_options, "-u", units, "-g", group, "-t", "double", "-n",  k, "-v", str(v) ])
@@ -177,6 +189,8 @@ class Server(object):
                 g.send(k, v, "double", "count", "both", 60, self.dmax, "_counters", self.ganglia_spoof_host)
             elif self.transport == 'ganglia-gmetric':
                 self.send_to_ganglia_using_gmetric(k,v, "_counters", "count")
+            elif self.transport == 'initialstate':
+                self.send_to_isstream(k, v, t)
 
             # Clear the counter once the data is sent
             del(self.counters[k])
@@ -201,6 +215,8 @@ class Server(object):
                 g.send(k, v, "double", "count", "both", 60, self.dmax, "_gauges", self.ganglia_spoof_host)
             elif self.transport == 'ganglia-gmetric':
                 self.send_to_ganglia_using_gmetric(k,v, "_gauges", "gauge")
+            elif self.transport == 'initialstate':
+                self.send_to_isstream(k, v, t)
 
             stats += 1
 
